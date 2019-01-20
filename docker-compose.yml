@@ -1,0 +1,64 @@
+version: '3'
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELK_VERSION}
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - esdata1:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - esnet
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${ELK_VERSION}
+    container_name: kibana
+    depends_on:
+      - elasticsearch
+    ports:
+      - "5601:5601"
+    networks:
+      - esnet      
+  logstash:
+    build:
+      context: .
+      dockerfile: Dockerfile.logstash
+      args:
+        ELK_VERSION: ${ELK_VERSION}
+    container_name: logstash
+    environment:
+      - ELASTIFLOW_DICT_PATH=/usr/share/logstash/elastiflow/dictionaries
+      - ELASTIFLOW_TEMPLATE_PATH=/usr/share/logstash/elastiflow/templates
+      - ELASTIFLOW_GEOIP_DB_PATH=/usr/share/logstash/elastiflow/geoipdbs
+      - ELASTIFLOW_ES_HOST=elasticsearch:9200
+    depends_on:
+      - kibana
+    ports:
+      - "2055:2055/udp"      
+      - "5044:5044"
+    networks:
+      - esnet      
+  alpine:
+    image: alpine
+    command: 
+      sh -c "apk update && apk add curl && 
+      curl -L https://github.com/robcowart/elastiflow/archive/master.zip -o master.zip && 
+      unzip master.zip && 
+      curl -X POST  http://kibana:5601/api/saved_objects/index-pattern/elastiflow-* -H "Content-Type:application/json" -H "kbn-xsrf:true" -d @/elastiflow-master/kibana/elastiflow.index_pattern.json"
+      #curl -X POST  http://kibana:5601/api/kibana/dashboards/import -H "Content-Type: application/json" -H "kbn-xsrf: true" -d @/elastiflow-master/kibana/elastiflow.dashboards.6.4.x.json
+    depends_on:
+      - logstash
+    networks:
+      - esnet
+volumes:
+  esdata1:
+    driver: local
+networks:
+  esnet:
