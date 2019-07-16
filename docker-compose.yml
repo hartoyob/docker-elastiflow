@@ -1,64 +1,88 @@
+#------------------------------------------------------------------------------
+# Portions of this file are Copyright (C)2019 Robert Cowart
+# 
+# Portions of this file are subject to the Robert Cowart Public License (the
+# "License") and may not be used or distributed except in compliance with the
+# License. You may obtain a copy of the License at:
+# 
+# http://www.koiossian.com/public/robert_cowart_public_license.txt
+# 
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
+# the specific language governing rights and limitations under the License.
+# 
+# The Original Source Code was developed by Robert Cowart. Portions created by
+# Robert Cowart are Copyright (C)2019 Robert Cowart. All Rights Reserved.
+#------------------------------------------------------------------------------
+
 version: '3'
+
 services:
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:${ELK_VERSION}
-    container_name: elasticsearch
-    environment:
-      - discovery.type=single-node
-      - bootstrap.memory_lock=true
-      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+  elastiflow-elasticsearch-oss:
+    image: docker.elastic.co/elasticsearch/elasticsearch-oss:7.0.1
+    container_name: elastiflow-elasticsearch-oss
+    restart: 'no'
     ulimits:
       memlock:
         soft: -1
         hard: -1
+    network_mode: host
     volumes:
-      - esdata1:/usr/share/elasticsearch/data
-    ports:
-      - "9200:9200"
-    networks:
-      - esnet
-  kibana:
-    image: docker.elastic.co/kibana/kibana:${ELK_VERSION}
-    container_name: kibana
-    depends_on:
-      - elasticsearch
-    ports:
-      - "5601:5601"
-    networks:
-      - esnet      
-  logstash:
-    build:
-      context: .
-      dockerfile: Dockerfile.logstash
-      args:
-        ELK_VERSION: ${ELK_VERSION}
-    container_name: logstash
+      - /var/lib/elastiflow_es:/usr/share/elasticsearch/data
     environment:
-      - ELASTIFLOW_DICT_PATH=/usr/share/logstash/elastiflow/dictionaries
-      - ELASTIFLOW_TEMPLATE_PATH=/usr/share/logstash/elastiflow/templates
-      - ELASTIFLOW_GEOIP_DB_PATH=/usr/share/logstash/elastiflow/geoipdbs
-      - ELASTIFLOW_ES_HOST=elasticsearch:9200
+      # JVM Heap size
+      #   - this should be at least 2GB for simple testing, receiving only a few flows per second.
+      #   - for production environments upto 31GB is recommended.
+      ES_JAVA_OPTS: '-Xms2g -Xmx2g'
+
+      cluster.name: elastiflow
+
+      bootstrap.memory_lock: 'true'
+
+      network.host: 0.0.0.0
+      http.port: 9200
+      discovery.type: 'single-node'
+
+      indices.query.bool.max_clause_count: 8192
+      search.max_buckets: 100000
+
+      action.destructive_requires_name: 'true'
+
+  elastiflow-kibana-oss:
+    image: docker.elastic.co/kibana/kibana-oss:7.0.1
+    container_name: elastiflow-kibana-oss
+    restart: 'no'
     depends_on:
-      - kibana
-    ports:
-      - "2055:2055/udp"      
-      - "5044:5044"
-    networks:
-      - esnet      
-  alpine:
-    image: alpine
-    command: 
-      sh -c "apk update && apk add curl && 
-      curl -L https://github.com/robcowart/elastiflow/archive/master.zip -o master.zip && 
-      unzip master.zip && 
-      curl -X POST  http://kibana:5601/api/saved_objects/index-pattern/elastiflow-* -H "Content-Type:application/json" -H "kbn-xsrf:true" -d @/elastiflow-master/kibana/elastiflow.index_pattern.json"
-      #curl -X POST  http://kibana:5601/api/kibana/dashboards/import -H "Content-Type: application/json" -H "kbn-xsrf: true" -d @/elastiflow-master/kibana/elastiflow.dashboards.6.4.x.json
+      - elastiflow-elasticsearch-oss
+    network_mode: host
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 5601
+
+      ELASTICSEARCH_HOSTS: "http://127.0.0.1:9200"
+
+      KIBANA_DEFAULTAPPID: "dashboard/653cf1e0-2fd2-11e7-99ed-49759aed30f5"
+
+      LOGGING_QUIET: 'true'
+
+  elastiflow-logstash-oss:
+    image: robcowart/elastiflow-logstash-oss:3.5.0_7.0.1
+    container_name: elastiflow-logstash-oss
+    restart: 'no'
     depends_on:
-      - logstash
-    networks:
-      - esnet
-volumes:
-  esdata1:
-    driver: local
-networks:
-  esnet:
+      - elastiflow-elasticsearch-oss
+    network_mode: host
+    environment:
+      # JVM Heap size - this MUST be at least 3GB (4GB preferred)
+      LS_JAVA_OPTS: '-Xms4g -Xmx4g'
+
+      # ElastiFlow global configuration
+      ELASTIFLOW_DEFAULT_APPID_SRCTYPE: "__UNKNOWN"
+
+      # Name resolution option
+      ELASTIFLOW_RESOLVE_IP2HOST: "false"
+      ELASTIFLOW_NAMESERVER: "127.0.0.1"
+
+      ELASTIFLOW_NETFLOW_IPV4_PORT: 2055
+      ELASTIFLOW_SFLOW_IPV4_PORT: 6343
+      ELASTIFLOW_IPFIX_TCP_IPV4_PORT: 4739
